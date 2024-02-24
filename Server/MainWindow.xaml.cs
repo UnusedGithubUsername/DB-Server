@@ -70,7 +70,9 @@ namespace Server {
             rsa.FromXmlString(privateKey);
 
             connections = new List<Socket>();
-            listener = new TcpListener(IPAddress.Loopback, port);//loopback means localhost
+            System.Net.IPAddress ip = System.Net.IPAddress.Parse("84.186.12.173");
+
+            listener = new TcpListener(IPAddress.Any, port);//loopback means localhost
             listener.Start(10);
 
             Timer updateLoop = new(100);//create an update loop that runs 10 times per second to scan for connections and data
@@ -78,13 +80,50 @@ namespace Server {
             updateLoop.Enabled = true;
             updateLoop.AutoReset = true;
             updateLoop.Start();
+
+            ReachGameServer();
+
+
+        }
+        DateTime time = DateTime.Now;
+        Socket client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        bool connected = false;
+
+        private async void ReachGameServer() { 
+
+            IPAddress ip = IPAddress.Parse("84.186.12.173");
+            while (true) { //continously try to connect to Game. And check if connection is still active
+                await Task.Delay(500);
+                if (!connected) {
+                    try {
+                        await client.ConnectAsync(ip, 16515); 
+                        SendPKeyPackage(client);
+
+                        time = DateTime.Now;
+                        connected = true;
+                    }
+                    catch (Exception e) {
+                        Chatoutput.Add(e.Message+" \n"); 
+                        UpdateConsole(true, Chatoutput.Count);
+                    }  
+                }
+                else { 
+                    if ((DateTime.Now - time).TotalSeconds > 2.0f) {
+
+                        connected = false; 
+                        client.Close();
+                        client.Dispose();
+                        client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp); 
+                    }
+                }
+            }
         }
 
         private async void ConnestToDB() {
             await using NpgsqlDataSource dataSource = NpgsqlDataSource.Create("Host=localhost;Port=5432;Username=postgres;Password=qwert;Database=qqq_game");
             database = dataSource.OpenConnection();
 
-            string preparedStatement = "SELECT GUId FROM users where email = (@email);";
+            string preparedStatement = "SELECT GUId, username FROM users where email = (@email);";
             Cmd_Logincheck = new NpgsqlCommand(preparedStatement, database);
             CmdP_Logincheck_email = Cmd_Logincheck.Parameters.Add(new NpgsqlParameter { ParameterName = "email", NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Varchar });
             Cmd_Logincheck.Prepare();
@@ -129,13 +168,7 @@ namespace Server {
                 connections.Add(connection);
 
                 //... and respond with a public key, so that the clients can send their credentials encrypted 
-                int byteLengthOfPublicKey = publicKey.Length;
-                byte[] pKeyLen = BitConverter.GetBytes(byteLengthOfPublicKey);
-                byte[] pKeyBytes = Encoding.UTF8.GetBytes(publicKey);
-                byte[] intBytes = ServerHelper.CombineBytes(pKeyLen, pKeyBytes);
-
-                //connection.Send(intBytes, 0, intBytes.Length, SocketFlags.None);
-                ServerHelper.Send(ref connection, PacketTypeServer.publicKeyPackage, intBytes);
+                SendPKeyPackage(connection);
                 Chatoutput.Add("Accepted a connection and SEND A PKEY" + "\n");
                 UpdateConsole(true, Chatoutput.Count);
             }
@@ -147,6 +180,10 @@ namespace Server {
                 }
             }
 
+            if(connected)
+                if(client.Available > 0)
+                    HandleConnectionRequest(client);
+
             //handle disconnect
             for (int i = 0; i < connections.Count; i++) {
                 if (connections[i].Connected == false) {
@@ -156,6 +193,17 @@ namespace Server {
             }
         }
 
+        private Socket SendPKeyPackage(Socket connection) {
+            int byteLengthOfPublicKey = publicKey.Length;
+            byte[] pKeyLen = BitConverter.GetBytes(byteLengthOfPublicKey);
+            byte[] pKeyBytes = Encoding.UTF8.GetBytes(publicKey);
+            byte[] intBytes = ServerHelper.CombineBytes(pKeyLen, pKeyBytes);
+
+            //connection.Send(intBytes, 0, intBytes.Length, SocketFlags.None);
+            ServerHelper.Send(ref connection, PacketTypeServer.publicKeyPackage, intBytes);
+            return connection;
+        }
+
         private async void HandleConnectionRequest(Socket connection) {
 
             StreamResult result = new(ref connection, ref rsa);
@@ -163,6 +211,18 @@ namespace Server {
             int clientToken = result.ReadInt();
 
             switch (type) {
+                case PacketTypeClient.ForewardLoginPacket:
+                    Chatoutput.Add("recieved forewarded Login");
+                    byte[] fwdLoginPacket = result.ReadBytes();
+                    int actualNetID = result.ReadInt(); 
+                    Chatoutput.Add(fwdLoginPacket.Length.ToString()+" bytes forewarded Login; netID="+actualNetID.ToString()+" \n");
+                    result.ConvertForewardedLoginPackage(ref fwdLoginPacket, ref rsa); 
+                    string name = result.ReadString();
+                    string encPW = result.ReadString();
+                    int netID2 = result.ReadInt();
+                    Chatoutput.Add(netID2.ToString()+" name= " + name + " pw=" +encPW +"\n");
+                    Login(name, encPW, connection, clientToken, actualNetID);
+                    break;
 
                 case PacketTypeClient.Login:
                     string email = result.ReadString();
@@ -211,6 +271,10 @@ namespace Server {
                     }
 
                     break;
+                case (PacketTypeClient.KeepAlive):
+                    time = DateTime.Now;
+                    break;
+                     
                 default:
                     break;
             }
@@ -293,14 +357,11 @@ namespace Server {
             return itemID;
         }
 
-        private async void Login(string name, string encryptedPassword, Socket connection, int clientToken, int netID) {
+        private async void Login(string name, string encryptedPassword, Socket connection, int clientToken, int netID) {// netID for game doesnt log in, just checks credentials
 
             //Step1: Retrieve the Guid of the Account. If we cant, the login failed
             CmdP_Logincheck_email.Value = name;
             await using NpgsqlDataReader reader = Cmd_Logincheck.ExecuteReader();
-
-            int Guid = 0;
-
             if (!reader.Read())//if no matching account is found, the login failed
             {
                 Chatoutput.Add("A Client failed to log in, name = " + name + "\n");
@@ -308,17 +369,17 @@ namespace Server {
                 reader.Close();
                 return;
             }
-
-            Guid = reader.GetInt32(0); //get the first value in the array (the array is 1 long, and the first and only value is the guid
+            int Guid = reader.GetInt32(0); //get the first value in the array (the array is 1 long, and the first and only value is the guid
+            string username = reader.GetString(1);
             reader.Close();
 
-            Chatoutput.Add("A Client logged int: GUId = " + Guid.ToString() + " , name = " + name + "\n");
+            Chatoutput.Add("A Client logged int: GUId = " + Guid.ToString() + " , name = " + username + " , email = " + name + "\n");
 
             //this is what actually logs in the client. but the game server will also check logins, 
             //the game server will send a netID so that it can reidentify the gameClient who logs in
             //we use the existence of the netID as an indicator that we dont actually wanne log in
             if(netID == 0)
-                loginSessions[Guid] = clientToken; //add or update dictionary
+                loginSessions[Guid] = clientToken; //add or update dictionary, but only if the netID is 0, because only gameServer sends netIDs to reidentify the player
 
             //now retrieve the clients items
             CmdP_getItems_ItemID.Value = Guid;
@@ -339,8 +400,12 @@ namespace Server {
             byte[] itemData = new byte[itemsOffset];//now make an array of the correct size instead of 5000 large
             Buffer.BlockCopy(items, 0, itemData, 0, itemsOffset);
             byte[] combinedData = ServerHelper.CombineBytes(BitConverter.GetBytes(Guid), BitConverter.GetBytes(itemsOffset), itemData);
+            byte[] nameLen = BitConverter.GetBytes(username.Length);
+            byte[] namebytes = Encoding.UTF8.GetBytes(username);
             combinedData = ServerHelper.CombineBytes(combinedData, BitConverter.GetBytes(netID));
-            
+            combinedData = ServerHelper.CombineBytes(combinedData, nameLen, namebytes);
+            //ALSO SEND EMAIL; NAME AND FRIENDSLIST!!!
+            //byte[] name = 
             ServerHelper.Send(ref connection, PacketTypeServer.LoginSuccessfull, combinedData);
 
             UpdateConsole(true, Chatoutput.Count);

@@ -49,7 +49,9 @@ namespace Server {
     public enum PacketTypeClient {
          
         Login, 
-        requestWithToken 
+        requestWithToken,
+        ForewardLoginPacket,
+        KeepAlive
     }
 
     public enum PacketTypeServer {
@@ -72,11 +74,17 @@ namespace Server {
 
             data = new byte[connection.Available];//create new array
             connection.Receive(data); //Read all data. the first 128 bytes are encrypted. the decrypted 128bytes are usually far fewer bytes
-             
+            //either the client token is encrypted into 128 bytes, or the full login package. either way, trailing bytes are unencrypted 
+
             //decrypt the first 128 bytes and write them to data[]
             byte[] dataToDecrypt = new byte[128];
-            Buffer.BlockCopy(data, 4, dataToDecrypt, 0, 128); 
-            dataToDecrypt = rsa.Decrypt(dataToDecrypt, false);
+            Buffer.BlockCopy(data, 4, dataToDecrypt, 0, 128);
+            try {
+                dataToDecrypt = rsa.Decrypt(dataToDecrypt, false); 
+            }
+            catch (Exception) {
+                data = new byte[200]; //empty array
+            }
              
             byte[] decryptedFullData = new byte[dataToDecrypt.Length + data.Length - 128];
             Buffer.BlockCopy(dataToDecrypt, 0, decryptedFullData, 4, dataToDecrypt.Length);
@@ -84,6 +92,24 @@ namespace Server {
             Buffer.BlockCopy(data, 132, decryptedFullData, dataToDecrypt.Length + 4, data.Length - 132);
             data = decryptedFullData;
 
+        }
+
+        public void ConvertForewardedLoginPackage(ref byte[] loginPackage, ref RSACryptoServiceProvider rsa) {
+            byte[] dataToDecrypt = new byte[128];
+            Buffer.BlockCopy(loginPackage, 4, dataToDecrypt, 0, 128);
+            try {
+                dataToDecrypt = rsa.Decrypt(dataToDecrypt, false);
+            }
+            catch (NullReferenceException q) {
+                loginPackage = new byte[200]; //empty array
+            }
+
+            byte[] decryptedFullData = new byte[dataToDecrypt.Length + loginPackage.Length - 128];
+            Buffer.BlockCopy(dataToDecrypt, 0, decryptedFullData, 4, dataToDecrypt.Length);
+            Buffer.BlockCopy(loginPackage, 0, decryptedFullData, 0, 4);
+            Buffer.BlockCopy(loginPackage, 132, decryptedFullData, dataToDecrypt.Length + 4, loginPackage.Length - 132);
+            data = decryptedFullData;
+            dataIndex = 8; //packageType and token are not relevatn
         }
 
         public string ReadString() {
