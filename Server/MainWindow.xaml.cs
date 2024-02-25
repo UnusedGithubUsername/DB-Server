@@ -58,6 +58,9 @@ namespace Server {
         private NpgsqlParameter CmdP_levelup_GUID;
         private NpgsqlParameter CmdP_levelup_ItemIndex;
 
+        Socket gameServer = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        DateTime lastGameServerMessage = DateTime.Now;
+        bool gameServerConnected = false;
 
         //have to send over username and password every time. Guid is the key, the session is the value
         public MainWindow() {
@@ -70,7 +73,7 @@ namespace Server {
             rsa.FromXmlString(privateKey);
 
             connections = new List<Socket>();
-            System.Net.IPAddress ip = System.Net.IPAddress.Parse("84.186.12.173");
+            IPAddress ip = IPAddress.Parse("84.186.12.173");
 
             listener = new TcpListener(IPAddress.Any, port);//loopback means localhost
             listener.Start(10);
@@ -85,35 +88,33 @@ namespace Server {
 
 
         }
-        DateTime time = DateTime.Now;
-        Socket client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        bool connected = false;
+
 
         private async void ReachGameServer() { 
 
             IPAddress ip = IPAddress.Parse("84.186.12.173");
             while (true) { //continously try to connect to Game. And check if connection is still active
                 await Task.Delay(500);
-                if (!connected) {
+                if (!gameServerConnected) {
                     try {
-                        await client.ConnectAsync(ip, 16515); 
-                        SendPKeyPackage(client);
+                        await gameServer.ConnectAsync(ip, 16515); 
+                        SendPKeyPackage(gameServer);
 
-                        time = DateTime.Now;
-                        connected = true;
+                        lastGameServerMessage = DateTime.Now;
+                        gameServerConnected = true;
                     }
                     catch (Exception e) {
-                        Chatoutput.Add(e.Message+" \n"); 
+                        Chatoutput.Add("Server not Reachable \n"); 
                         UpdateConsole(true, Chatoutput.Count);
                     }  
                 }
                 else { 
-                    if ((DateTime.Now - time).TotalSeconds > 2.0f) {
+                    if ((DateTime.Now - lastGameServerMessage).TotalSeconds > 2.0f) {
 
-                        connected = false; 
-                        client.Close();
-                        client.Dispose();
-                        client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp); 
+                        gameServerConnected = false; 
+                        gameServer.Close();
+                        gameServer.Dispose();
+                        gameServer = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp); 
                     }
                 }
             }
@@ -180,9 +181,9 @@ namespace Server {
                 }
             }
 
-            if(connected)
-                if(client.Available > 0)
-                    HandleConnectionRequest(client);
+            if(gameServerConnected)
+                if(gameServer.Available > 0)
+                    HandleConnectionRequest(gameServer);
 
             //handle disconnect
             for (int i = 0; i < connections.Count; i++) {
@@ -272,7 +273,7 @@ namespace Server {
 
                     break;
                 case (PacketTypeClient.KeepAlive):
-                    time = DateTime.Now;
+                    lastGameServerMessage = DateTime.Now;
                     break;
                      
                 default:
