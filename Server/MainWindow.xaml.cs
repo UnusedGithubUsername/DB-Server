@@ -26,6 +26,9 @@ namespace Server {
         private readonly string privateKey;
         private readonly Dictionary<int, int> loginSessions = new();//lookup if a client is logged in, so he does not
 
+        Socket gameServer = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        DateTime lastGameServerMessage = DateTime.Now;
+        bool gameServerConnected = false;
 
         private NpgsqlConnection database;
 
@@ -56,11 +59,7 @@ namespace Server {
         private NpgsqlCommand Cmd_levelup;
         private NpgsqlParameter CmdP_levelup_XP;
         private NpgsqlParameter CmdP_levelup_GUID;
-        private NpgsqlParameter CmdP_levelup_ItemIndex;
-
-        Socket gameServer = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        DateTime lastGameServerMessage = DateTime.Now;
-        bool gameServerConnected = false;
+        private NpgsqlParameter CmdP_levelup_ItemIndex; 
 
         //have to send over username and password every time. Guid is the key, the session is the value
         public MainWindow() {
@@ -84,9 +83,7 @@ namespace Server {
             updateLoop.AutoReset = true;
             updateLoop.Start();
 
-            ReachGameServer();
-
-
+            ReachGameServer(); 
         }
 
 
@@ -242,19 +239,19 @@ namespace Server {
                     if (!isValidLogin)
                         return;
 
-                    int characterType = await getItemID(userGUID, characterGuid);
+                    int characterType = await GetItemType(userGUID, characterGuid);
                     bool isValidCharacter = characterType > 1000;
                     if (!isValidCharacter)
                         break;
 
                     if (requestType == 0) { //save data
                         byte[] characterData = result.ReadBytes();
-                        byte[] newCharacterData = await CharacterDB.saveCharacterData(userGUID, characterGuid, characterData, this);
+                        byte[] newCharacterData = await CharacterDB.SaveCharacterData(userGUID, characterGuid, characterData, this);
                         ServerHelper.Send(ref connection, PacketTypeServer.CharacterData, ServerHelper.CombineBytes(BitConverter.GetBytes(characterGuid), BitConverter.GetBytes(newCharacterData.Length), newCharacterData));
 
                     }
                     else if (requestType == 1) {//get a certain characters data  
-                        byte[] characterData = CharacterDB.getCharacterData(userGUID, characterGuid, characterType);
+                        byte[] characterData = CharacterDB.getCharacterData(userGUID, characterGuid, characterType).ToByte();
                         ServerHelper.Send(ref connection, PacketTypeServer.CharacterData, ServerHelper.CombineBytes(BitConverter.GetBytes(characterGuid), BitConverter.GetBytes(characterData.Length), characterData));
                     }
                     else if (requestType == 2) { //Levelup
@@ -266,7 +263,7 @@ namespace Server {
                         }
                     }
                     else if (requestType == 3) {
-                        byte[] characterData = await CharacterDB.ResetStats(userGUID, characterGuid, characterType);
+                        byte[] characterData = CharacterDB.ResetStats(userGUID, characterGuid, characterType);
                         ServerHelper.Send(ref connection, PacketTypeServer.CharacterData, ServerHelper.CombineBytes(BitConverter.GetBytes(characterGuid), BitConverter.GetBytes(characterData.Length), characterData));
 
                     }
@@ -285,8 +282,8 @@ namespace Server {
             Chatoutput.Add("Character wants to level up to level " + requestedLevel.ToString() + "\n");
             UpdateConsole(true, Chatoutput.Count);
 
-            int characterXP = await getItemXP(itemIndex, userGuid);
-            int userXP = await getUserXP(userGuid);
+            int characterXP = await GetCharacterXP(itemIndex, userGuid);
+            int userXP = await GetUserXP(userGuid);
             int actualLevel = (int)Math.Sqrt((double)characterXP / 10); // Sum (n+n-1) starting at n= 1 =  n^2 , so converting back is just a sqare root
             int nextLevel = actualLevel + 1;
             int requiredXP = (nextLevel * 2 - 1) * 10; //  (n+n-1) is equal to 2n-1
@@ -303,59 +300,35 @@ namespace Server {
             return xp_remaining;
         }
 
-        public async void SetLevelup(int itemIndex, int userGuid, int xp_value) {
-
+        public void SetLevelup(int itemIndex, int userGuid, int xp_value) { 
             CmdP_levelup_ItemIndex.Value = itemIndex;
             CmdP_levelup_GUID.Value = userGuid;
             CmdP_levelup_XP.Value = xp_value;
             Cmd_levelup.ExecuteNonQuery();
         }
 
-        public async Task<int> getItemXP(int itemIndex, int userGuid) {
-
+        public async Task<int> GetCharacterXP(int itemIndex, int userGuid) { 
             CmdP_getItemXp_ItemIndex.Value = itemIndex;
-            CmdP_getItemXp_PlayerGUID.Value = userGuid;
-            await using NpgsqlDataReader xpReader = Cmd_getItemXp.ExecuteReader();
-            int characterXP = -1;
-
-            if (xpReader.Read()) {
-                characterXP = xpReader.GetInt32(0); // Assuming the first column is an integer  
-            }
-            xpReader.Close();
-
-            return characterXP;
+            CmdP_getItemXp_PlayerGUID.Value = userGuid; 
+            return await GetSingleValueFromQuery(Cmd_getItemXp);
         }
 
-        public async Task<int> getUserXP(int userGuid) {
-
-            CmdP_getUserXp_PlayerGUID.Value = userGuid;
-            await using NpgsqlDataReader xpReader = Cmd_getUserXp.ExecuteReader();
-            int userXP = -1;
-
-            if (xpReader.Read()) {
-                userXP = xpReader.GetInt32(0); // Assuming the first column is an integer  
-            }
-            xpReader.Close();
-
-            return userXP;
+        public async Task<int> GetUserXP(int userGuid) { 
+            CmdP_getUserXp_PlayerGUID.Value = userGuid; 
+            return await GetSingleValueFromQuery(Cmd_getUserXp); 
         }
 
-        public async Task<int> getItemID(int userGuid, int item_guid) {
+        public async Task<int> GetItemType(int userGuid, int item_guid) {
             CmdP_getItemType_PlayerGUID.Value = userGuid;
-            CmdP_getItemType_ItemIndex.Value = item_guid;
-            await using NpgsqlDataReader reader = Cmd_getItemType.ExecuteReader();
-            int itemID = -1;
+            CmdP_getItemType_ItemIndex.Value = item_guid; 
+            return await GetSingleValueFromQuery(Cmd_getItemType);
+        }
 
-            if (reader.Read())//if any data is available to be read, that means we got data back
-            {
-                itemID = reader.GetInt32(0);
-                Chatoutput.Add("A Client fetches item for saving: id = " + itemID.ToString() + "\n");
-            }
-            else {
-                Chatoutput.Add(userGuid + " failed to retrieve item_guid " + item_guid + "\n");
-            }
-            UpdateConsole(true, Chatoutput.Count);
-            return itemID;
+        public async Task<int> GetSingleValueFromQuery(NpgsqlCommand cmd) {
+            await using NpgsqlDataReader reader = cmd.ExecuteReader();
+            int value = reader.Read() ? reader.GetInt32(0) : -1;//if data is available to be read, that means we got itemID back
+            reader.Close();
+            return value;
         }
 
         private async void Login(string name, string encryptedPassword, Socket connection, int clientToken, int netID) {// netID for game doesnt log in, just checks credentials

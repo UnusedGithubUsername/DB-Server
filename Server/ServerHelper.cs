@@ -9,15 +9,17 @@ namespace Server {
         public byte[] stats = new byte[4];
         public byte[] statsPerLevel = new byte[4];
         public byte[] skills = new byte[10];
-        public byte statpointsFullyAllocated = 0;
+        public byte statpointsFullyAllocated = 0; 
+        public byte skillpointsFullyAllocated = 0;
         public CustomizedCharacter(byte[] characterData) {
             Buffer.BlockCopy(characterData, 0, stats, 0, stats.Length );
             Buffer.BlockCopy(characterData, 4, statsPerLevel, 0, statsPerLevel.Length );
             Buffer.BlockCopy(characterData, 8, skills, 0, skills.Length );
             statpointsFullyAllocated = characterData[18];
+            skillpointsFullyAllocated = characterData[19];
         }
 
-        public CustomizedCharacter(byte[] bStats, byte[] sPLevel, byte[] sklz, byte statpointsFullyAllocatedd) {
+        public CustomizedCharacter(byte[] bStats, byte[] sPLevel, byte[] sklz, byte statpointsFullyAllocatedd, byte skillpointsFullyAllocatedd) {
             if (bStats.Length != stats.Length || sPLevel.Length != statsPerLevel.Length || skills.Length != sklz.Length) {
                 throw new IndexOutOfRangeException("Customized character expects different values");
             }
@@ -25,15 +27,17 @@ namespace Server {
             Buffer.BlockCopy(sPLevel,   0, statsPerLevel,   0, statsPerLevel.Length );
             Buffer.BlockCopy(sklz,      0, skills,          0, skills.Length );
             statpointsFullyAllocated = statpointsFullyAllocatedd;
+            skillpointsFullyAllocated = skillpointsFullyAllocatedd;
         }
 
         public byte[] ToByte() {
-            byte[] dataAsByte = new byte[19];
+            byte[] dataAsByte = new byte[20];
 
-            Buffer.BlockCopy(stats,     0,      dataAsByte, 0, stats.Length);
-            Buffer.BlockCopy(statsPerLevel, 0,      dataAsByte, stats.Length, statsPerLevel.Length);
-            Buffer.BlockCopy(skills,        0,      dataAsByte, stats.Length + statsPerLevel.Length, skills.Length);
+            Buffer.BlockCopy(stats,     0,      dataAsByte, 0, 4);
+            Buffer.BlockCopy(statsPerLevel, 0,  dataAsByte, 4, 4);
+            Buffer.BlockCopy(skills,        0,  dataAsByte, 8, 10);
             dataAsByte[18] = statpointsFullyAllocated;
+            dataAsByte[19] = skillpointsFullyAllocated;
             return dataAsByte; 
         }
     }
@@ -100,7 +104,7 @@ namespace Server {
             try {
                 dataToDecrypt = rsa.Decrypt(dataToDecrypt, false);
             }
-            catch (NullReferenceException q) {
+            catch (Exception) {
                 loginPackage = new byte[200]; //empty array
             }
 

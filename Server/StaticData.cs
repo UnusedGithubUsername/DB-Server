@@ -18,6 +18,7 @@ namespace Server {
                 new byte[] {1, 1, 1, 1},
                 new byte[] {0, 0, 0, 0},
                 new byte[] {0,0,0,0,0,0,0,0,0,0},
+                0,
                 0
                 ),            
             
@@ -25,6 +26,7 @@ namespace Server {
                 new byte[] {10, 15, 15, 20},
                 new byte[] {0, 1, 2, 1},
                 new byte[] {0,0,0,0,0,0,0,0,0,0},
+                0,
                 0
                 ),
 
@@ -32,6 +34,7 @@ namespace Server {
                 new byte[] {20, 15, 15, 10},
                 new byte[] {0, 1, 2, 1},
                 new byte[] {2,3,1,0,0,0,0,0,0,0},
+                0,
                 0
                 ), 
 
@@ -39,6 +42,7 @@ namespace Server {
                 new byte[] {20, 18, 12, 10},
                 new byte[] {0, 1, 2, 1},
                 new byte[] {1,0,0,5,0,0,2,0,0,0},
+                0,
                 0
                 )
 
